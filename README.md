@@ -3,16 +3,17 @@
 原理就是拿你的电脑挂着腾讯元宝网页当api用
 ---
 <h3>演示效果如下</h3>
-![屏幕截图 2025-06-01 003013](https://github.com/user-attachments/assets/1792a5a6-a4d3-45f4-a748-fcde84f22860)
+![屏幕截图 2025-06-01 003013](https://github.com/user-attachments/assets/07afb9c9-5519-406f-822a-9ef42358e4e4)
+
 py环境3.0以上即可，已提供源代码，需要修改或打包等请自行操作
 ---
-<h3>部署api方法(直接使用源代码,Windows操作)</h3>：  
+<h3>部署api方法(直接使用源代码,Windows操作)：</h3>  
 git仓库或将代码文件aiapi.py，setbrowser.py复制至同一目录下后，打开cmd窗口，cd至目录  
 输入python aiapi.py，等待元宝页面打开后自行使用账号登录(放心，我还不至于搁这小脚本上贪你的账号)  
 返回cmd窗口，enter键继续，等待Flask运行即可  
 以上步骤不要太频繁，之后保持窗口运行
 ---
-<h3>访问api方式</h3>：  
+<h3>访问api方式：</h3>  
 具体参照test.py，Post传输方式  
 接收json格式：{  
   &emsp;#必填  
