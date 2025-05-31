@@ -371,4 +371,4 @@ def handle_request():
 
 if __name__ == '__main__':
     print("启动服务")
-    app.run(host='0.0.0.0', port=8000)
+    app.run(host='0.0.0.0', port=8000) 
