@@ -24,4 +24,3 @@ def autoh(url):
     input("登录完腾讯元宝后enter键下一步")
     time.sleep(3)
     return driver
-    
