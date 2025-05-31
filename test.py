@@ -28,5 +28,6 @@ try:
     )
     print("响应状态码:", response.status_code)
     print("响应内容:", response.json())
+    
 except Exception as e:
     print("请求失败:", str(e))
