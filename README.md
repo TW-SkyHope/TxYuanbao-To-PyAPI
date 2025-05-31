@@ -1,5 +1,5 @@
 # TxYuanbao-To-PyAPI
-基于Python Selenium的Flask API，用于使用Python脚本操控腾讯AI元宝网页的输入上传发送等操作并检测元宝AI的输出将其返回为json，以创建一个腾讯元宝驱动的AI API接口  
+<h3>基于Python Selenium的Flask API，用于使用Python脚本操控腾讯AI元宝网页的输入上传发送等操作并检测元宝AI的输出将其返回为json，以创建一个腾讯元宝驱动的AI API接口  
 原理就是拿你的电脑挂着腾讯元宝网页当api用  
 演示效果如下
 ![屏幕截图 2025-06-01 003013](https://github.com/user-attachments/assets/1792a5a6-a4d3-45f4-a748-fcde84f22860)
@@ -33,4 +33,4 @@ git仓库或将代码文件aiapi.py，setbrowser.py复制至同一目录下后
 }  
 注意事项：api目前为单线程运行，同时间多个访问会返回错误  
 若您正在使用我的项目对我的项目有新的需求或发现bug请向于本项目内报告  
-作者的话：我tm服了为什么市赛不用ai，省赛直接ai漫天飞？？？这私人题目还必须得用ai搞，老子还没钱充ai的api，勾吧信息比赛(赛名我就不说了)，密码的我直接做个api挂nat机上，花钱是不可能的！ 
+作者的话：我tm服了为什么市赛不用ai，省赛直接ai漫天飞？？？这私人题目还必须得用ai搞，老子还没钱充ai的api，勾吧信息比赛(赛名我就不说了)，密码的我直接做个api挂nat机上，花钱是不可能的！ </h3>
