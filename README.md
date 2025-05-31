@@ -1,6 +1,6 @@
 # TxYuanbao-To-PyAPI  
 <h2>基于Python Selenium的Flask API，用于使用Python脚本操控腾讯AI元宝网页的输入上传发送等操作并检测元宝AI的输出将其返回为json，以创建一个腾讯元宝驱动的AI API接口</h2>  
-原理就是拿你的电脑挂着腾讯元宝网页当api用  
+<h2>原理就是拿你的电脑挂着腾讯元宝网页当api用</h2>
 
 ---
 <h3>演示效果如下</h3>
@@ -12,8 +12,8 @@ py环境3.0以上即可，已提供源代码，需要修改或打包等请自行
 ---
 <h3>部署api方法(直接使用源代码,Windows操作)：</h3>  
 git仓库或将代码文件aiapi.py，setbrowser.py复制至同一目录下后，打开cmd窗口，cd至目录<br /> 
-输入python aiapi.py，等待元宝页面打开后自行使用账号登录(放心，我还不至于搁这小脚本上贪你的账号)  
-返回cmd窗口，enter键继续，等待Flask运行即可    
+输入python aiapi.py，等待元宝页面打开后自行使用账号登录(放心，我还不至于搁这小脚本上贪你的账号)<br />
+返回cmd窗口，enter键继续，等待Flask运行即可<br />   
 以上步骤不要太频繁，之后保持窗口运行  
 
 ---
