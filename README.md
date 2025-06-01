@@ -6,12 +6,13 @@
 
 ![屏幕截图 2025-06-01 003013](https://github.com/user-attachments/assets/19176373-dd67-47b4-8d0d-e70b8d23bc1c)
 
-py环境3.0以上即可，已提供源代码，需要修改或打包等请自行操作  
+py环境3.0以上即可，已提供源代码，需要修改(自行看代码注释)或打包等请自行操作  
 
 ---
 <h2>部署api方法(直接使用源代码,Windows操作)：</h2>  
 
-- git仓库或将代码文件aiapi.py，setbrowser.py复制至同一目录下后，打开cmd窗口，cd至目录 
+- 请先pip安装文件aiapi.py与setbrowser.py中头文件的库，同时配置setbrowser.py中的内容（有注释），记得下载运行浏览器的webdriver，以edge为例，下载链接：https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver/?form=MA13LH#installation
+- git仓库或将代码文件aiapi.py，setbrowser.py复制至同一目录下后，打开cmd窗口，cd至目录
 - 输入python aiapi.py，等待元宝页面打开后自行使用账号登录(放心，我还不至于搁这小脚本上贪你的账号)
 - 返回cmd窗口，enter键继续，等待Flask运行即可
 
