@@ -273,6 +273,7 @@ def handle_request():
     
     try:
         global request_data
+        #注意！！！！！！这里可以改成request_data = request.get_json()
         request_data = json.loads(request.get_json())
         if not request_data:
             print("空请求")
@@ -290,7 +291,7 @@ def handle_request():
                 print("创建新会话")
                 try:
                     new_btn = WebDriverWait(driver, 10).until(
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".yb-common-nav__new-chat.J_UseGuideNewChat0"))
+                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".yb-tencent-yuanbao-list__item .yb-tencent-yuanbao-list__logo"))
                     )
                     new_btn[0].click()
                     time.sleep(2)
@@ -371,4 +372,4 @@ def handle_request():
 
 if __name__ == '__main__':
     print("启动服务")
-    app.run(host='0.0.0.0', port=8000) 
+    app.run(host='0.0.0.0', port=8000)
