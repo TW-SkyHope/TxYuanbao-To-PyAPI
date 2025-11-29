@@ -1,375 +1,883 @@
+# aiapi.py
 from flask import Flask, request, jsonify
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from setbrowser import *
-import imghdr
 import json
 import time
 import os
 import re
-import glob
 from apscheduler.schedulers.background import BackgroundScheduler
 import threading
 import base64
+import logging
+import signal
+import traceback
+from collections import deque
+import setbrowser
 
 app = Flask(__name__)
-lock = threading.Lock()
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("app.log"),
+        logging.StreamHandler()
+    ]
+)
 
-# 初始化浏览器
-driver = autoh('https://yuanbao.tencent.com/login')
-driver.refresh()
-print("浏览器初始化完成")
+# 全局变量管理多个浏览器标签页
 
-def validate_image(file_stream):
-    """检查图片格式是否有效"""
-    file_type = imghdr.what(None, h=file_stream.read(1024))
-    file_stream.seek(0)
-    return file_type in {'jpeg', 'png', 'gif', 'webp', 'jpg', 'bmp'}
+tabs = deque()  # 存储可用标签页
+tab_lock = threading.Lock()  # 标签页管理锁
+tab_counter = 0  # 标签页计数器
 
-def wait_for_stable_text(element, wait_time=2, timeout=999):
-    """等待文本稳定"""
-    class TextChecker:
-        def __init__(self, element, wait_time):
-            self.element = element
-            self.wait_time = wait_time
-            self.last_text = None
-            self.stable_time = None
-            self.skip_patterns = [
-                r'找到\d+相关资料',
-                r'正在分析',
-                r'正在处理',
-                r'正在生成'
-            ]
+class YuanbaoAutomation:
+    def __init__(self, tab_id, max_retries=3):
+        self.tab_id = tab_id
+        self.driver = None
+        self.max_retries = max_retries
+        self.initialize_driver()
         
-        def should_skip(self, text):
-            for pattern in self.skip_patterns:
-                if re.search(pattern, text):
-                    return True
-            return False
+        self.lock = threading.Lock()
+        self.scheduler = BackgroundScheduler()
+        self.scheduler.add_job(self.refresh_page, 'interval', seconds=600)
+        self.scheduler.start()
+    
+    def initialize_driver(self):
+        for attempt in range(1, self.max_retries + 1):
+                logging.info(f"标签页 {self.tab_id}: 尝试初始化浏览器 ({attempt}/{self.max_retries})")
+                self.driver = autoh('https://yuanbao.tencent.com/login')
+                self.driver.refresh()
+                logging.info(f"标签页 {self.tab_id}: 浏览器初始化完成")
+                return
+    
+    def refresh_page(self):
+        if not self.lock.acquire(blocking=False):
+            logging.info(f"标签页 {self.tab_id}: 已有任务运行，跳过刷新")
+            return
         
-        def __call__(self, driver):
-            current_text = self.element.text
-            print(f"当前文本内容: {current_text}")
+        try:
+            logging.info(f"标签页 {self.tab_id}: 执行页面刷新")
+            self.driver.refresh()
+            time.sleep(2)
+        except Exception as e:
+            logging.error(f"标签页 {self.tab_id}: 页面刷新失败: {str(e)}")
+            try:
+                self.driver.quit()
+            except:
+                pass
+            self.initialize_driver()
+        finally:
+            self.lock.release()
+    
+    def wait_for_stable_text(self, element, wait_time=2, timeout=120):
+        class TextChecker:
+            def __init__(self, element, wait_time, tab_id):
+                self.element = element
+                self.wait_time = wait_time
+                self.last_text = None
+                self.stable_time = None
+                self.skip_patterns = [
+                    r'找到\d+相关资料',
+                    r'正在分析',
+                    r'正在处理',
+                    r'正在生成'
+                ]
+                self.tab_id = tab_id
             
-            if self.should_skip(current_text):
-                print("检测到中间状态文本，继续等待...")
+            def should_skip(self, text):
+                for pattern in self.skip_patterns:
+                    if re.search(pattern, text):
+                        return True
+                return False
+            
+            def __call__(self, driver):
+                try:
+                    current_text = self.element.text
+                    logging.debug(f"标签页 {self.tab_id}: 当前文本内容: {current_text[:100]}...")
+                    
+                    if self.should_skip(current_text):
+                        logging.debug(f"标签页 {self.tab_id}: 检测到中间状态文本，继续等待...")
+                        return False
+                        
+                    if current_text != self.last_text:
+                        self.last_text = current_text
+                        self.stable_time = time.time()
+                        return False
+                    elif self.stable_time and (time.time() - self.stable_time) >= self.wait_time:
+                        logging.debug(f"标签页 {self.tab_id}: 文本已稳定: {current_text[:100]}...")
+                        return current_text
+                    return False
+                except Exception as e:
+                    logging.warning(f"标签页 {self.tab_id}: 文本检查出错: {str(e)}")
+                    return False
+        
+        try:
+            return WebDriverWait(element.parent, timeout).until(
+                TextChecker(element, wait_time, self.tab_id)
+            )
+        except Exception as e:
+            logging.error(f"标签页 {self.tab_id}: 等待文本超时: {str(e)}")
+            try:
+                return element.text
+            except:
+                raise TimeoutError(f"等待文本超时（{timeout}秒）")
+    
+    def get_new_message(self, timeout=120):
+        logging.info(f"标签页 {self.tab_id}: 等待新消息...")
+        try:
+            initial_messages = self.driver.find_elements(By.CSS_SELECTOR, '.agent-chat__bubble__content')
+            known_texts = {msg.text for msg in initial_messages}
+            
+            end_time = time.time() + timeout
+            while time.time() < end_time:
+                try:
+                    current_messages = self.driver.find_elements(By.CSS_SELECTOR, '.agent-chat__bubble__content')
+                    for msg in current_messages:
+                        try:
+                            msg_text = msg.text
+                            if msg_text and msg_text not in known_texts:
+                                logging.info(f"标签页 {self.tab_id}: 发现新消息: {msg_text[:50]}...")
+                                return msg
+                        except:
+                            continue
+                except Exception as e:
+                    logging.warning(f"标签页 {self.tab_id}: 检查新消息时出错: {str(e)}")
+                
+                time.sleep(1)
+            
+            raise TimeoutError("等待新消息超时")
+        except Exception as e:
+            logging.error(f"标签页 {self.tab_id}: 获取新消息失败: {str(e)}")
+            raise
+    
+    def upload_image(self, image_data):
+        logging.info(f"标签页 {self.tab_id}: 开始上传图片...")
+        temp_file = None
+        try:
+            temp_file = f"temp_img_{int(time.time()*1000)}.png"
+            
+            # 尝试多种方式定位上传按钮
+            selectors = [
+                "span[class*='upload-icon']",
+            ]
+            
+            upload_btn = None
+            for selector in selectors:
+                try:
+                    upload_btn = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                    )
+                    break
+                except:
+                    continue
+            
+            if not upload_btn:
+                raise Exception("无法定位上传按钮")
+                
+            upload_btn.click()
+            time.sleep(1)
+
+            # 定位文件输入框
+            
+            file_input_selectors = [
+                "input[accept*='capture=filesystem,.jpg,.jpeg,.png,.webp,.bmp,.gif']",
+            ]
+            
+            file_input = None
+            for selector in file_input_selectors:
+                try:
+                    file_input = WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                    )
+                    break
+                except:
+                    continue
+            
+            if not file_input:
+                raise Exception("无法定位文件输入框")
+            
+            # 创建临时文件
+            with open(temp_file, "wb") as f:
+                # 确保正确处理base64编码
+                if image_data.startswith('data:image'):
+                    # 移除base64前缀
+                    header, encoded = image_data.split(",", 1)
+                    image_bytes = base64.b64decode(encoded)
+                else:
+                    image_bytes = base64.b64decode(image_data)
+                    
+                f.write(image_bytes)
+            
+            # 上传文件
+            file_input.send_keys(os.path.abspath(temp_file))
+            time.sleep(5)
+            
+            logging.info(f"标签页 {self.tab_id}: 图片上传完成")
+            return True
+        except Exception as e:
+            logging.error(f"标签页 {self.tab_id}: 图片上传出错: {str(e)}")
+            return False
+        finally:
+            # 清理临时文件
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+    
+    def upload_files(self, files, request_data):
+        logging.info(f"标签页 {self.tab_id}: 准备上传 {len(files)} 个文件")
+        temp_files = []
+        try:
+            image_types = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
+            
+            # 尝试多种方式定位上传按钮
+            selectors = [
+                "span[class*='upload-icon']",
+            ]
+            
+            upload_btn = None
+            for selector in selectors:
+                try:
+                    upload_btn = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                    )
+                    break
+                except:
+                    continue
+            
+            if not upload_btn:
+                raise Exception("无法定位上传按钮")
+                
+            upload_btn.click()
+            time.sleep(1)
+            
+            # 点击本地文件上传
+            local_btn_selectors = [
+                "span[class*='upload-icon']",
+            ]
+            
+            local_btn = None
+            for selector in local_btn_selectors:
+                try:
+                    local_btn = WebDriverWait(self.driver, 10).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                    )
+                    break
+                except:
+                    continue
+            
+            if not local_btn:
+                raise Exception("无法定位本地上传按钮")
+                
+            local_btn.click()
+            time.sleep(1)
+            
+            # 定位文件输入框
+            file_input_selectors = [
+                "input[accept*='capture=filesystem,,.pdf,.xls,.xlsx,.ppt,.pptx,.doc,.docx,.txt,.csv,.text,.bat,.c,.cpp,.cs,.css,.go,.h,.hpp,.ini,.java,.js,.json,.log,.lua,.md,.php,.pl,.py,.rb,.sh,.sql,.swift,.tex,.toml,.vue,.yaml,.yml,.xml,.html']",
+            ]
+            
+            file_input = None
+            for selector in file_input_selectors:
+                try:
+                    file_input = WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                    )
+                    break
+                except:
+                    continue
+            
+            if not file_input:
+                raise Exception("无法定位文件输入框")
+            
+            # 解析 request_data：如果是字符串则解析为字典
+            parsed_request_data = request_data
+            if isinstance(request_data, str):
+                try:
+                    parsed_request_data = json.loads(request_data)
+                    logging.info(f"标签页 {self.tab_id}: 成功解析JSON请求数据: {parsed_request_data}")
+                except json.JSONDecodeError as e:
+                    logging.error(f"标签页 {self.tab_id}: JSON解析失败: {str(e)}")
+                    raise Exception(f"请求数据格式错误: {str(e)}")
+            
+            file_paths = []
+            for i, (file_key, file_data) in enumerate(files.items(), 1):
+                logging.info(f"标签页 {self.tab_id}: 处理文件 {i}/{len(files)}")
+                
+                # 安全获取文件名 - 支持字典和解析后的字典
+                filename = f'file{i}'  # 默认值
+                
+                # 检查 parsed_request_data 的类型并获取文件名
+                if isinstance(parsed_request_data, dict):
+                    filename = parsed_request_data.get(f'filename{i}', f'file{i}')
+                elif hasattr(parsed_request_data, 'get'):
+                    filename = parsed_request_data.get(f'filename{i}', f'file{i}')
+                else:
+                    logging.warning(f"标签页 {self.tab_id}: 无法从请求数据中获取filename{i}，使用默认文件名")
+                
+                ext = os.path.splitext(filename)[1].lower()
+                
+                if ext in image_types:
+                    logging.info(f"标签页 {self.tab_id}: 跳过图片文件: {filename}")
+                    continue
+                
+                # 使用原始文件名（来自request_data）作为临时文件名
+                temp_file = filename  # 直接使用request_data中的文件名
+                temp_files.append(temp_file)
+                
+                logging.info(f"标签页 {self.tab_id}: 创建临时文件 {temp_file}")
+                with open(temp_file, "wb") as f:
+                    f.write(base64.b64decode(file_data))
+                file_paths.append(os.path.abspath(temp_file))
+            
+            if file_paths:
+                logging.info(f"标签页 {self.tab_id}: 开始上传文件")
+                file_input.send_keys("\n".join(file_paths))
+                time.sleep(5)
+                
+                # 检查上传错误
+                error_selectors = [
+                    ".upload-error-message",
+                    ".error-message",
+                    ".alert-danger"
+                ]
+                
+                for selector in error_selectors:
+                    try:
+                        errors = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                        if errors:
+                            error_msg = errors[0].text
+                            logging.error(f"标签页 {self.tab_id}: 上传错误: {error_msg}")
+                            raise Exception(error_msg)
+                    except:
+                        continue
+            
+            # 关闭上传窗口
+            try:
+                self.driver.find_element(By.TAG_NAME, 'body').click()
+            except:
+                pass
+            time.sleep(1)
+            
+            logging.info(f"标签页 {self.tab_id}: 文件上传完成")
+            return True
+        except Exception as e:
+            logging.error(f"标签页 {self.tab_id}: 文件上传失败: {str(e)}")
+            return False
+        finally:
+            # 清理临时文件
+            for path in temp_files:
+                if os.path.exists(path):
+                    try:
+                        print(f"删除临时文件: {path}")
+                    except:
+                        pass
+    
+    def change_model(self, model):
+        logging.info(f"标签页 {self.tab_id}: 准备切换到 {model} 模型")
+        try:
+            # 修复：使用正确的元素定位方法
+            selectors = self.driver.find_element(By.XPATH, "//div[@dt-button-id='model_switch' and @dt-mod-id='main_mod']")
+            selectors.click()
+            time.sleep(1)
+            
+            # 选择模型
+            model_options = elements = self.driver.find_elements(By.XPATH, "//*[@class='ybc-model-select-dropdown-item-name']")
+
+            found = False
+            for option in model_options:
+                try:
+                    option_text = option.text
+                    if model.lower() == "deepseek" and "DeepSeek" in option_text:
+                        option.click()
+                        found = True
+                        break
+                    elif model.lower() == "hunyuan" and "Hunyuan" in option_text:
+                        option.click()
+                        found = True
+                        break
+                except:
+                    continue
+            
+            if not found:
+                logging.error(f"标签页 {self.tab_id}: 未找到匹配的模型选项: {model}")
                 return False
                 
-            if current_text != self.last_text:
-                self.last_text = current_text
-                self.stable_time = time.time()
-                return False
-            elif self.stable_time and (time.time() - self.stable_time) >= self.wait_time:
-                print(f"文本已稳定: {current_text}")
-                return current_text
+            time.sleep(1)
+            logging.info(f"标签页 {self.tab_id}: 模型切换完成")
+            return True
+        except Exception as e:
+            logging.error(f"标签页 {self.tab_id}: 模型切换失败: {str(e)}")
             return False
     
-    try:
-        return WebDriverWait(element.parent, timeout).until(
-            TextChecker(element, wait_time)
-        )
-    except Exception as e:
-        print(f"等待文本超时: {str(e)}")
-        raise TimeoutError(f"等待文本超时（{timeout}秒）")
-
-def get_new_message(driver, timeout=999):
-    """获取新消息"""
-    print("等待新消息...")
-    initial_messages = driver.find_elements(By.CSS_SELECTOR, '.agent-chat__bubble__content')
-    known_texts = {msg.text for msg in initial_messages}
-    
-    class NewMessage:
-        def __init__(self, known_texts):
-            self.known_texts = known_texts
-        
-        def __call__(self, driver):
-            current_messages = driver.find_elements(By.CSS_SELECTOR, '.agent-chat__bubble__content')
-            for msg in current_messages:
-                if msg.text not in self.known_texts:
-                    print(f"发现新消息: {msg.text}")
-                    return msg
+    def handle_session(self, session_id):
+        """处理会话切换 - 修复版本"""
+        try:
+            logging.info(f"标签页 {self.tab_id}: 处理会话: {session_id}")
+            
+            # 检查当前会话
+            current_selectors = [
+                ".yb-recent-conv-list__item.active",
+                ".active-conversation",
+                "[data-active='true']"
+            ]
+            
+            current = None
+            for selector in current_selectors:
+                try:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        current = elements
+                        break
+                except:
+                    continue
+            
+            if current and current[0].get_attribute("dt-cid") == session_id:
+                logging.info(f"标签页 {self.tab_id}: 已是当前会话")
+                return True
+            
+            if session_id == "new":
+                logging.info(f"标签页 {self.tab_id}: 创建新会话")
+                # 尝试多种方式定位新建会话按钮
+                new_btn_selectors = [
+                    ".yb-tencent-yuanbao-list__item .yb-tencent-yuanbao-list__logo",
+                    ".new-conversation",
+                    "[data-testid='new-conversation']"
+                ]
+                
+                new_btn = None
+                for selector in new_btn_selectors:
+                    try:
+                        buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                        if buttons:
+                            new_btn = buttons[0]
+                            break
+                    except:
+                        continue
+                
+                if not new_btn:
+                    raise Exception("无法定位新建会话按钮")
+                    
+                new_btn.click()
+                time.sleep(2)
+                
+                # 等待新会话加载
+                greeting_selectors = [
+                    ".agent-chat__conv--agent-homepage-v2__greeting",
+                    ".welcome-message",
+                    ".empty-state"
+                ]
+                
+                for selector in greeting_selectors:
+                    try:
+                        WebDriverWait(self.driver, 20).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                        )
+                        break
+                    except:
+                        continue
+            else:
+                logging.info(f"标签页 {self.tab_id}: 切换到会话 {session_id}")
+                # 尝试多种方式定位会话
+                session_selectors = [
+                    f"[dt-cid='{session_id}']",
+                    f".conversation-item[data-id='{session_id}']",
+                    f"[data-session-id='{session_id}']"
+                ]
+                
+                session = None
+                for selector in session_selectors:
+                    try:
+                        elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                        if elements:
+                            session = elements[0]
+                            break
+                    except:
+                        continue
+                
+                if not session:
+                    raise Exception(f"无法定位会话: {session_id}")
+                    
+                session.click()
+                time.sleep(2)
+            return True
+        except Exception as e:
+            logging.error(f"标签页 {self.tab_id}: 会话操作失败: {str(e)}")
             return False
     
-    try:
-        return WebDriverWait(driver, timeout).until(
-            NewMessage(known_texts)
-        )
-    except Exception:
-        print("等待新消息超时")
-        raise TimeoutError("等待新消息超时")
-
-def upload_image(driver, image_data):
-    """上传图片文件"""
-    print("开始上传图片...")
-    try:
-        temp_file = f"temp_img_{int(time.time()*1000)}.png"
-        main_window = driver.current_window_handle
+    def contains_keywords(self, text, query, min_keywords=2):
+        """检查文本是否包含查询中的关键词"""
+        if not text or not query:
+            return False
         
-        print("点击上传按钮")
-        upload_btn = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, ".index__upload-item___I2o3F"))
-        )
-        upload_btn.click()
-        time.sleep(1)
-
-        print("定位文件输入框")
-        file_input = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".index__input-uploader___L9wop input[type='file']"))
-        )
-
-        print("创建临时文件")
-        with open(temp_file, "wb") as f:
-            f.write(base64.b64decode(image_data))
+        # 分词比较（简单实现）
+        text_words = set(re.findall(r'\b\w+\b', text.lower()))
+        query_words = set(re.findall(r'\b\w+\b', query.lower()))
         
-        print("上传文件")
-        file_input.send_keys(os.path.abspath(temp_file))
-        #虽然这个关闭可能没啥用
-        print("关闭上传窗口")
-        driver.find_element(By.TAG_NAME, 'body').click()
-        driver.switch_to.window(main_window)
-        time.sleep(3)
+        # 计算交集
+        common_words = text_words.intersection(query_words)
         
-        print("清理临时文件")
-        os.remove(temp_file)
-        print("图片上传完成")
-        return True
-    except Exception as e:
-        print(f"图片上传出错: {str(e)}")
-        for temp_file in glob.glob("temp_img_*.png"):
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-        return False
-
-def upload_files(driver, files):
-    """上传多个文件"""
-    print(f"准备上传 {len(files)} 个文件")
-    try:
-        image_types = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
-        
-        print("打开上传界面")
-        upload_btn = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, ".index__upload-item___ywIAD"))
-        )
-        upload_btn.click()
-        time.sleep(1)
-        
-        print("点击本地文件上传")
-        local_btn = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, ".index__upload-btn___wGp7B"))
-        )
-        local_btn.click()
-        time.sleep(1)
-        
-        print("定位文件输入框")
-        file_input = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".index__input-uploader___Vvv7x input[type='file']"))
-        )
-        
-        file_paths = []
-        for i, (file_key, file_data) in enumerate(files.items(), 1):
-            print(f"处理文件 {i}/{len(files)}")
-            original_name = request_data.get(f'filename{i}', 'file')
-            ext = os.path.splitext(original_name)[1].lower()
+        # 如果共同词汇达到一定数量，认为包含关键词
+        return len(common_words) >= min(min_keywords, len(query_words))
+    
+    def validate_and_wait_for_response(self, original_text, request_data, timeout=180):
+        """验证响应文本并与原始文本对比，如果相同则继续检测未稳定文本"""
+        try:
+            logging.info(f"标签页 {self.tab_id}: 开始验证响应文本")
             
-            if ext in image_types:
-                print(f"跳过图片文件: {original_name}")
-                continue
+            # 安全获取文本内容用于对比
+            if isinstance(request_data, dict):
+                original_query = request_data.get('text', '')
+            elif hasattr(request_data, 'get'):
+                original_query = request_data.get('text', '')
+            else:
+                original_query = str(request_data)
             
-            ext = ext if ext else '.bin'
-            temp_file = f"temp_{int(time.time()*1000)}_{i}{ext}"
+            logging.info(f"标签页 {self.tab_id}: 原始查询文本: {original_query[:100]}...")
             
-            print(f"创建临时文件 {temp_file}")
-            with open(temp_file, "wb") as f:
-                f.write(base64.b64decode(file_data))
-            file_paths.append(os.path.abspath(temp_file))
-        
-        if file_paths:
-            print("开始上传文件")
-            file_input.send_keys("\n".join(file_paths))
-            time.sleep(2)
+            # 获取新消息
+            new_msg = self.get_new_message(timeout=60)
             
-            errors = driver.find_elements(By.CSS_SELECTOR, ".upload-error-message")
-            if errors:
-                print(f"上传错误: {errors[0].text}")
-                raise Exception(errors[0].text)
-        
-        print("关闭上传窗口")
-        driver.find_element(By.TAG_NAME, 'body').click()
-        time.sleep(1)
-        
-        print("清理临时文件")
-        for path in file_paths:
-            if os.path.exists(path):
-                os.remove(path)
-        
-        print("文件上传完成")
-        return True
-    except Exception as e:
-        print(f"文件上传失败: {str(e)}")
-        for temp_file in glob.glob("temp_*"):
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-        return False
-
-def change_model(driver, model):
-    """切换模型"""
-    print(f"准备切换到 {model} 模型")
-    try:
-        print("点击模型切换按钮")
-        switch_btn = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, ".style__switch-model--arrow___LxKWQ"))
-        )
-        switch_btn.click()
-        time.sleep(1)
-        
-        print("选择模型")
-        # 修改后的选择器，更可靠地定位模型选项
-        if model.lower() == "deepseek":
-            # 使用包含特定文本的元素
-            model_options = driver.find_elements(By.XPATH, "//*[contains(@class, 't-dropdown__item')]")
-            for option in model_options:
-                if "DeepSeek" in option.text:
-                    option.click()
+            # 初始等待文本稳定
+            initial_text = self.wait_for_stable_text(new_msg, wait_time=2, timeout=60)
+            logging.info(f"标签页 {self.tab_id}: 初始稳定文本: {initial_text[:100]}...")
+            
+            # 文本验证逻辑
+            validation_count = 0
+            max_validations = 3
+            current_text = initial_text
+            
+            while validation_count < max_validations:
+                validation_count += 1
+                logging.info(f"标签页 {self.tab_id}: 执行第 {validation_count} 次文本验证")
+                time.sleep(2)
+                
+                # 检查条件1：响应文本与原始查询完全相同
+                # 检查条件2：响应文本包含原始查询的关键词（防止误判）
+                is_identical = (current_text.strip() == original_query.strip())
+                contains_keywords = self.contains_keywords(current_text, original_query)
+                
+                logging.info(f"标签页 {self.tab_id}: 文本验证 - 相同: {is_identical}, 包含关键词: {contains_keywords}")
+                
+                # 如果文本完全相同，说明可能是卡顿或未生成完成
+                if is_identical and len(current_text.strip()) > 0:
+                    logging.warning(f"标签页 {self.tab_id}: 检测到响应文本与查询文本完全相同 (第{validation_count}次)，可能存在异常")
+                    
+                    # 额外等待更长时间
+                    extra_wait_time = 3  # 增加等待时间
+                    logging.info(f"标签页 {self.tab_id}: 额外等待 {extra_wait_time} 秒后重新检查...")
+                    time.sleep(extra_wait_time)
+                    
+                    # 重新获取消息和文本
+                    try:
+                        new_msg = self.get_new_message(timeout=30)
+                        current_text = self.wait_for_stable_text(new_msg, wait_time=3, timeout=60)
+                        logging.info(f"标签页 {self.tab_id}: 重新获取文本: {current_text[:100]}...")
+                        
+                        # 再次验证
+                        is_still_identical = (current_text.strip() == original_query.strip())
+                        if not is_still_identical:
+                            logging.info(f"标签页 {self.tab_id}: 文本已更新，退出验证循环")
+                            break
+                            
+                    except Exception as e:
+                        logging.error(f"标签页 {self.tab_id}: 重新获取消息失败: {str(e)}")
+                        break
+                        
+                # 如果文本包含关键词但不完全相同，可能是正常响应
+                elif contains_keywords and not is_identical:
+                    logging.info(f"标签页 {self.tab_id}: 响应文本包含查询关键词，判断为正常响应")
                     break
-        elif model.lower() == "hunyuan":
-            model_options = driver.find_elements(By.XPATH, "//*[contains(@class, 't-dropdown__item')]")
-            for option in model_options:
-                if "Hunyuan" in option.text:
-                    option.click()
+                    
+                # 如果文本完全不同，说明是正常的新响应
+                elif not is_identical and not contains_keywords:
+                    logging.info(f"标签页 {self.tab_id}: 响应文本与查询文本不同，判断为正常响应")
                     break
-        else:
-            return False
-        
-        time.sleep(1)
-        print("模型切换完成")
-        return True
-    except Exception as e:
-        print(f"模型切换失败: {str(e)}")
-        return False
+                    
+                # 如果达到最大验证次数仍相同，强制返回当前文本
+                if validation_count >= max_validations:
+                    logging.warning(f"标签页 {self.tab_id}: 达到最大验证次数，强制返回当前文本")
+                    break
+            
+            # 最终等待确保文本完全稳定
+            final_text = self.wait_for_stable_text(new_msg, wait_time=3, timeout=60)
+            logging.info(f"标签页 {self.tab_id}: 最终稳定文本: {final_text[:100]}...")
+            
+            logging.info(f"标签页 {self.tab_id}: 文本验证完成，最终文本长度: {len(final_text)}")
+            return final_text
+            
+        except Exception as e:
+            logging.error(f"标签页 {self.tab_id}: 文本验证过程出错: {str(e)}")
+            # 出错时返回原始文本
+            try:
+                return new_msg.text if new_msg else initial_text
+            except:
+                return initial_text
     
-def refresh_page():
-    """定时刷新页面，防检测(虽然我也不知道有没有检测)"""
-    if not lock.acquire(blocking=False):
-        print("已有任务运行，跳过刷新")
-        return
-    try:
-        print("执行页面刷新")
-        driver.refresh()
-    finally:
-        lock.release()
+    def send_message(self, request_data):
+        try:
+            logging.info(f"标签页 {self.tab_id}: 输入文本")
+            # 尝试多种方式定位输入框
+            input_selectors = [
+                ".ql-editor.ql-blank",
+                ".message-input",
+                "textarea[placeholder='输入你的问题']",
+                "[contenteditable='true']"
+            ]
+            
+            input_box = None
+            for selector in input_selectors:
+                try:
+                    input_box = WebDriverWait(self.driver, 15).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                    )
+                    break
+                except:
+                    continue
+            
+            if not input_box:
+                raise Exception("无法定位输入框")
+                
+            # 安全获取文本内容
+            text_content = ""
+            if isinstance(request_data, dict):
+                text_content = request_data.get('text', '')
+            elif hasattr(request_data, 'get'):
+                text_content = request_data.get('text', '')
+            else:
+                text_content = str(request_data)
+            
+            input_box.clear()
+            input_box.send_keys(text_content)
+            
+            logging.info(f"标签页 {self.tab_id}: 发送消息")
+            # 尝试多种方式定位发送按钮
+            send_btn_selectors = [
+                "#yuanbao-send-btn"
+            ]
+            
+            send_btn = None
+            for selector in send_btn_selectors:
+                try:
+                    send_btn = WebDriverWait(self.driver, 15).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                    )
+                    break
+                except:
+                    continue
+            
+            if not send_btn:
+                raise Exception("无法定位发送按钮")
+                
+            send_btn.click()
+            
+            logging.info(f"标签页 {self.tab_id}: 等待回复")
+            # 使用新的验证方法替代原来的简单等待
+            final_text = self.validate_and_wait_for_response(text_content, request_data)
+            
+            logging.info(f"标签页 {self.tab_id}: 获取会话ID")
+            # 尝试多种方式定位活动会话
+            active_selectors = [
+                ".yb-recent-conv-list__item.active",
+                ".active-conversation",
+                "[data-active='true']"
+            ]
+            
+            active = None
+            for selector in active_selectors:
+                try:
+                    active = WebDriverWait(self.driver, 15).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                    )
+                    break
+                except:
+                    continue
+            
+            if not active:
+                raise Exception("无法定位活动会话")
+                
+            current_id = active.get_attribute("dt-cid")
+            
+            return {"id": current_id, "text": final_text}
+        except Exception as e:
+            logging.error(f"标签页 {self.tab_id}: 消息发送失败: {str(e)}")
+            raise
 
-scheduler = BackgroundScheduler()
-scheduler.add_job(refresh_page, 'interval', seconds=1000)
-scheduler.start()
+# 初始化标签页管理器
+def initialize_tabs():
+    global tabs, tab_counter
+    with tab_lock:
+        # 创建初始标签页
+        main_tab = YuanbaoAutomation(tab_id=tab_counter)
+        tabs.append(main_tab)
+        tab_counter += 1
+        logging.info(f"初始化主标签页 {main_tab.tab_id}")
+
+# 获取可用标签页
+def get_available_tab():
+    global tabs, tab_counter
+    
+    with tab_lock:
+        # 检查是否有可用标签页
+        available_tabs = [tab for tab in tabs if not tab.lock.locked()]
+        if available_tabs:
+            return available_tabs[0]
+        
+        # 没有可用标签页，检查是否可以创建新标签页
+        if len(tabs) < MAX_TABS:
+            new_tab = YuanbaoAutomation(tab_id=tab_counter)
+            tabs.append(new_tab)
+            tab_counter += 1
+            logging.info(f"创建新标签页 {new_tab.tab_id}")
+            return new_tab
+        
+        # 所有标签页都忙且达到最大数量
+        logging.warning(f"所有标签页都忙且达到最大数量 {MAX_TABS}")
+        return None
 
 @app.route('/hunyuan', methods=['POST'])
 def handle_request():
-    """处理请求"""
-    print("收到新请求")
-    if not lock.acquire(blocking=False):
-        print("系统繁忙")
-        return "系统繁忙，请稍后再试", 429
+    logging.info("收到新请求")
+    
+    # 获取可用标签页
+    tab = get_available_tab()
+    if not tab:
+        logging.warning("系统繁忙，所有标签页都忙")
+        return jsonify({"error": "系统繁忙，请稍后再试"}), 429
+    
+    # 尝试获取标签页锁
+    if not tab.lock.acquire(blocking=False):
+        logging.warning(f"标签页 {tab.tab_id} 忙，尝试获取其他标签页")
+        # 如果获取的标签页突然变忙，尝试获取其他标签页
+        tab = get_available_tab()
+        if not tab or not tab.lock.acquire(blocking=False):
+            logging.warning("系统繁忙，无法获取可用标签页")
+            return jsonify({"error": "系统繁忙，请稍后再试"}), 429
     
     try:
-        global request_data
-        #注意！！！！！！这里可以改成request_data = request.get_json()
-        request_data = json.loads(request.get_json())
-        if not request_data:
-            print("空请求")
-            return jsonify({"error": "请求数据不能为空"}), 400
+        # 安全解析JSON数据
+        try:
+            # 尝试直接获取JSON
+            request_data = request.get_json()
+            if request_data is None:
+                # 如果get_json返回None，尝试手动解析
+                data = request.data.decode('utf-8')
+                if not data:
+                    logging.warning("空请求体")
+                    return jsonify({"error": "请求数据为空"}), 400
+                request_data = json.loads(data)
+        except Exception as e:
+            logging.warning(f"JSON解析失败: {str(e)}")
+            # 尝试手动解析
+            data = request.data.decode('utf-8')
+            if not data:
+                logging.warning("空请求体")
+                return jsonify({"error": "请求数据为空"}), 400
+            try:
+                request_data = json.loads(data)
+            except:
+                logging.warning("无效的JSON格式")
+                return jsonify({"error": "无效的JSON格式"}), 400
         
-        print("处理请求数据")
-        response = {}
-        session_id = request_data.get('sequence')
-        
-        current = driver.find_elements(By.CSS_SELECTOR, ".yb-recent-conv-list__item.active")
-        if current and current[0].get_attribute("dt-cid") == session_id:
-            print("已是当前会话")
-        else:
-            if session_id == "new":
-                print("创建新会话")
+        # 确保request_data是字典类型
+        if not isinstance(request_data, dict):
+            logging.warning(f"请求数据不是字典类型: {type(request_data)}")
+            # 尝试转换或提取
+            if isinstance(request_data, str):
                 try:
-                    new_btn = WebDriverWait(driver, 10).until(
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".yb-tencent-yuanbao-list__item .yb-tencent-yuanbao-list__logo"))
-                    )
-                    new_btn[0].click()
-                    time.sleep(2)
-                    
-                    WebDriverWait(driver, 15).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, ".agent-chat__conv--agent-homepage-v2__greeting"))
-                    )
-                except Exception as e:
-                    print(f"创建会话失败: {str(e)}")
-                    return jsonify({"error": f"创建会话失败: {str(e)}"}), 500
+                    request_data = json.loads(request_data)
+                except:
+                    logging.warning("无法将字符串转换为字典")
+                    request_data = {"text": request_data}
             else:
-                print(f"切换到会话 {session_id}")
-                try:
-                    session = WebDriverWait(driver, 10).until(
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, f"[dt-cid='{session_id}']"))
-                    )
-                    session[0].click()
-                    time.sleep(2)
-                except Exception as e:
-                    print(f"切换会话失败: {str(e)}")
-                    return jsonify({"error": f"切换会话失败: {str(e)}"}), 500
+                request_data = {"text": str(request_data)}
         
-        if request_data.get('mode'):
-            print(f"切换模型到 {request_data['mode']}")
-            if not change_model(driver, request_data['mode']):
+        logging.info(f"标签页 {tab.tab_id}: 处理请求: {json.dumps(request_data, ensure_ascii=False)[:200]}...")
+        session_id = request_data.get('sequence', 'new')
+        
+        # 处理会话
+        if not tab.handle_session(session_id):
+            return jsonify({"error": "会话操作失败"}), 500
+        
+        # 切换模型
+        mode = request_data.get('mode')
+        if mode:
+            logging.info(f"标签页 {tab.tab_id}: 切换模型到 {mode}")
+            if not tab.change_model(mode):
                 return jsonify({"error": "模型切换失败"}), 500
-            
-
-        if request_data.get('picture') and request_data['picture'] != "new":
-            print("上传图片")
-            if not upload_image(driver, request_data['picture']):
+        
+        # 上传图片
+        picture = request_data.get('picture')
+        if picture and picture != "new":
+            logging.info(f"标签页 {tab.tab_id}: 上传图片")
+            if not tab.upload_image(picture):
                 return jsonify({"error": "图片上传失败"}), 500
         
-        files = {k: v for k, v in request_data.items() if re.match(r'file\d+', k)}
+        # 上传文件
+        files = {}
+        if isinstance(request_data, dict):
+            files = {k: v for k, v in request_data.items() if re.match(r'file\d+', k)}
+        elif hasattr(request_data, 'items'):
+            files = {k: v for k, v in request_data.items() if re.match(r'file\d+', k)}
+        
         if files:
-            print(f"上传 {len(files)} 个文件")
-            if not upload_files(driver, files):
+            logging.info(f"标签页 {tab.tab_id}: 上传 {len(files)} 个文件")
+            if not tab.upload_files(files, request_data):
                 return jsonify({"error": "文件上传失败"}), 500
         
-        try:
-            print("输入文本")
-            input_box = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".ql-editor.ql-blank"))
-            )
-            input_box.send_keys(request_data.get('text'))
-            
-            print("发送消息")
-            send_btn = WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, ".style__send-btn___ZsLmU"))
-            )
-            send_btn.click()
-            
-            print("等待回复")
-            new_msg = get_new_message(driver)
-            final_text = wait_for_stable_text(new_msg)
-            
-            print("获取会话ID")
-            active = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".yb-recent-conv-list__item.active"))
-            )
-            current_id = active.get_attribute("dt-cid")
-            
-            response["id"] = current_id
-            response["text"] = final_text
-            print("请求处理完成")
-            return jsonify(response)
-            
-        except Exception as e:
-            print(f"消息发送失败: {str(e)}")
-            return jsonify({"error": f"消息发送失败: {str(e)}"}), 500
-            
+        # 发送消息并获取响应
+        response = tab.send_message(request_data)
+        logging.info(f"标签页 {tab.tab_id}: 请求处理完成: ID={response.get('id')}, 文本长度={len(response.get('text', ''))}")
+        return jsonify(response)
+        
+    except TimeoutError as e:
+        logging.error(f"标签页 {tab.tab_id}: 操作超时: {str(e)}")
+        return jsonify({"error": str(e)}), 504
     except Exception as e:
-        print(f"处理出错: {str(e)}")
-        return jsonify({"error": f"处理出错: {str(e)}"}), 500
+        logging.exception(f"标签页 {tab.tab_id}: 处理出错: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({"error": f"服务器错误: {str(e)}"}), 500
     finally:
-        lock.release()
-        print("释放锁")
+        tab.lock.release()
+        logging.info(f"标签页 {tab.tab_id}: 释放锁")
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    try:
+        status_list = []
+        with tab_lock:
+            for tab in tabs:
+                try:
+                    if tab.driver:
+                        title = tab.driver.title
+                        status_list.append({"id": tab.tab_id, "status": "ok", "title": title})
+                    else:
+                        status_list.append({"id": tab.tab_id, "status": "degraded", "message": "浏览器未初始化"})
+                except:
+                    status_list.append({"id": tab.tab_id, "status": "error", "message": "浏览器状态未知"})
+        
+        return jsonify({
+            "total_tabs": len(tabs),
+            "max_tabs": MAX_TABS,
+            "tabs": status_list
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+def shutdown_handler(signum, frame):
+    logging.info("接收到终止信号，关闭服务...")
+    exit(0)
 
 if __name__ == '__main__':
-    print("启动服务")
-    app.run(host='0.0.0.0', port=8000)
+    import signal
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
+    
+    # 初始化标签页
+    initialize_tabs()
+    
+    logging.info(f"启动服务，最大标签页数量: {MAX_TABS}")
+    app.run(host='0.0.0.0', port=8000, threaded=True)
