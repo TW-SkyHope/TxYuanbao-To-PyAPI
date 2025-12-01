@@ -880,4 +880,5 @@ if __name__ == '__main__':
     initialize_tabs()
     
     logging.info(f"启动服务，最大标签页数量: {MAX_TABS}")
-    app.run(host='0.0.0.0', port=8000, threaded=True)
+    app.run(host='0.0.0.0', port=PORT_RUNNING, threaded=True)
+
