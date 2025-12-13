@@ -429,11 +429,14 @@ class YuanbaoAutomation:
             current = None
             for selector in current_selectors:
                 try:
+                    logging.debug(f"标签页 {self.tab_id}: 检查当前会话选择器: {selector}")
                     elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
                     if elements:
                         current = elements
+                        logging.debug(f"标签页 {self.tab_id}: 找到当前会话元素")
                         break
-                except:
+                except Exception as e:
+                    logging.debug(f"标签页 {self.tab_id}: 检查当前会话选择器失败: {e}")
                     continue
             
             if current and current[0].get_attribute("dt-cid") == session_id:
@@ -452,34 +455,37 @@ class YuanbaoAutomation:
                 new_btn = None
                 for selector in new_btn_selectors:
                     try:
+                        logging.debug(f"标签页 {self.tab_id}: 定位新建会话按钮选择器: {selector}")
                         buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
                         if buttons:
                             new_btn = buttons[0]
+                            logging.info(f"标签页 {self.tab_id}: 找到新建会话按钮")
                             break
-                    except:
+                    except Exception as e:
+                        logging.debug(f"标签页 {self.tab_id}: 定位新建会话按钮失败: {e}")
                         continue
                 
                 if not new_btn:
                     raise Exception("无法定位新建会话按钮")
                     
+                logging.info(f"标签页 {self.tab_id}: 点击新建会话按钮")
                 new_btn.click()
+                logging.info(f"标签页 {self.tab_id}: 等待2秒让页面响应")
                 time.sleep(2)
                 
-                # 等待新会话加载
+                # 等待新会话加载 - 优化：缩短等待时间，添加详细日志
                 greeting_selectors = [
+                    ".agent-chat__bubble__content",  # 更通用的聊天内容选择器
                     ".agent-chat__conv--agent-homepage-v2__greeting",
                     ".welcome-message",
                     ".empty-state"
                 ]
                 
-                for selector in greeting_selectors:
-                    try:
-                        WebDriverWait(self.driver, 20).until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                        )
-                        break
-                    except:
-                        continue
+                logging.info(f"标签页 {self.tab_id}: 等待新会话加载")
+                # 等待10秒后直接跳过
+                time.sleep(10)
+                logging.warning(f"标签页 {self.tab_id}: 新会话加载超时，跳过等待")
+                # 不抛出异常，继续执行
             else:
                 logging.info(f"标签页 {self.tab_id}: 切换到会话 {session_id}")
                 # 尝试多种方式定位会话
@@ -492,11 +498,14 @@ class YuanbaoAutomation:
                 session = None
                 for selector in session_selectors:
                     try:
+                        logging.debug(f"标签页 {self.tab_id}: 定位会话选择器: {selector}")
                         elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
                         if elements:
                             session = elements[0]
+                            logging.info(f"标签页 {self.tab_id}: 找到会话元素")
                             break
-                    except:
+                    except Exception as e:
+                        logging.debug(f"标签页 {self.tab_id}: 定位会话失败: {e}")
                         continue
                 
                 if not session:
@@ -507,6 +516,7 @@ class YuanbaoAutomation:
             return True
         except Exception as e:
             logging.error(f"标签页 {self.tab_id}: 会话操作失败: {str(e)}")
+            logging.error(f"标签页 {self.tab_id}: 错误详情: {traceback.format_exc()}")
             return False
     
     def contains_keywords(self, text, query, min_keywords=2):
