@@ -9,7 +9,7 @@
 py环境3.0以上即可，已提供源代码，需要修改(自行看代码注释)或打包等请自行操作  
 
 ---
-<h2>部署api方法(直接使用源代码,windows。Releases里可直接使用exe)：</h2>  
+<h2>部署api方法(直接使用源代码,windows)：</h2>  
 <h3>
 
 - 请先pip安装python库：pip install selenium webdriver-manager flask requests apscheduler
@@ -54,7 +54,7 @@ py环境3.0以上即可，已提供源代码，需要修改(自行看代码注�
 ```
 <h3>
   
-  > 注意事项：已成功实现多线程，setbrowser.py中的最大标签页数量就是线程的数量
+  > 注意事项：已成功实现多线程，setbrowser.py中的最大标签页数量就是线程的数量，且部分设置可在setbrowser.py中进行设置
 </h3>
 
 ## 项目维护
