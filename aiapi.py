@@ -61,7 +61,7 @@ class YuanbaoAutomation:
         try:
             logging.info(f"标签页 {self.tab_id}: 执行页面刷新")
             self.driver.refresh()
-            time.sleep(2)
+            time.sleep(0.5)
         except Exception as e:
             logging.error(f"标签页 {self.tab_id}: 页面刷新失败: {str(e)}")
             try:
@@ -72,7 +72,7 @@ class YuanbaoAutomation:
         finally:
             self.lock.release()
     
-    def wait_for_stable_text(self, element, wait_time=2, timeout=120):
+    def wait_for_stable_text(self, element, wait_time=0.5, timeout=60):
         class TextChecker:
             def __init__(self, element, wait_time, tab_id):
                 self.element = element
@@ -125,7 +125,7 @@ class YuanbaoAutomation:
             except:
                 raise TimeoutError(f"等待文本超时（{timeout}秒）")
     
-    def get_new_message(self, timeout=120):
+    def get_new_message(self, timeout=60):
         logging.info(f"标签页 {self.tab_id}: 等待新消息...")
         try:
             initial_messages = self.driver.find_elements(By.CSS_SELECTOR, '.agent-chat__bubble__content')
@@ -146,7 +146,7 @@ class YuanbaoAutomation:
                 except Exception as e:
                     logging.warning(f"标签页 {self.tab_id}: 检查新消息时出错: {str(e)}")
                 
-                time.sleep(1)
+                time.sleep(0.2)
             
             raise TimeoutError("等待新消息超时")
         except Exception as e:
@@ -167,7 +167,7 @@ class YuanbaoAutomation:
             upload_btn = None
             for selector in selectors:
                 try:
-                    upload_btn = WebDriverWait(self.driver, 10).until(
+                    upload_btn = WebDriverWait(self.driver, 5).until(
                         EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
                     )
                     break
@@ -178,7 +178,7 @@ class YuanbaoAutomation:
                 raise Exception("无法定位上传按钮")
                 
             upload_btn.click()
-            time.sleep(1)
+            time.sleep(0.5)
 
             # 定位文件输入框
             
@@ -189,7 +189,7 @@ class YuanbaoAutomation:
             file_input = None
             for selector in file_input_selectors:
                 try:
-                    file_input = WebDriverWait(self.driver, 10).until(
+                    file_input = WebDriverWait(self.driver, 5).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                     )
                     break
@@ -213,7 +213,7 @@ class YuanbaoAutomation:
             
             # 上传文件
             file_input.send_keys(os.path.abspath(temp_file))
-            time.sleep(5)
+            time.sleep(2)
             
             logging.info(f"标签页 {self.tab_id}: 图片上传完成")
             return True
@@ -242,7 +242,7 @@ class YuanbaoAutomation:
             upload_btn = None
             for selector in selectors:
                 try:
-                    upload_btn = WebDriverWait(self.driver, 10).until(
+                    upload_btn = WebDriverWait(self.driver, 5).until(
                         EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
                     )
                     break
@@ -253,7 +253,7 @@ class YuanbaoAutomation:
                 raise Exception("无法定位上传按钮")
                 
             upload_btn.click()
-            time.sleep(1)
+            time.sleep(0.5)
             
             # 点击本地文件上传
             local_btn_selectors = [
@@ -263,7 +263,7 @@ class YuanbaoAutomation:
             local_btn = None
             for selector in local_btn_selectors:
                 try:
-                    local_btn = WebDriverWait(self.driver, 10).until(
+                    local_btn = WebDriverWait(self.driver, 5).until(
                         EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
                     )
                     break
@@ -274,7 +274,7 @@ class YuanbaoAutomation:
                 raise Exception("无法定位本地上传按钮")
                 
             local_btn.click()
-            time.sleep(1)
+            time.sleep(0.5)
             
             # 定位文件输入框
             file_input_selectors = [
@@ -284,7 +284,7 @@ class YuanbaoAutomation:
             file_input = None
             for selector in file_input_selectors:
                 try:
-                    file_input = WebDriverWait(self.driver, 10).until(
+                    file_input = WebDriverWait(self.driver, 5).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                     )
                     break
@@ -337,7 +337,7 @@ class YuanbaoAutomation:
             if file_paths:
                 logging.info(f"标签页 {self.tab_id}: 开始上传文件")
                 file_input.send_keys("\n".join(file_paths))
-                time.sleep(5)
+                time.sleep(2)
                 
                 # 检查上传错误
                 error_selectors = [
@@ -361,7 +361,7 @@ class YuanbaoAutomation:
                 self.driver.find_element(By.TAG_NAME, 'body').click()
             except:
                 pass
-            time.sleep(1)
+            time.sleep(0.5)
             
             logging.info(f"标签页 {self.tab_id}: 文件上传完成")
             return True
@@ -383,7 +383,7 @@ class YuanbaoAutomation:
             # 修复：使用正确的元素定位方法
             selectors = self.driver.find_element(By.XPATH, "//div[@dt-button-id='model_switch' and @dt-mod-id='main_mod']")
             selectors.click()
-            time.sleep(1)
+            time.sleep(0.5)
             
             # 选择模型
             model_options = elements = self.driver.find_elements(By.XPATH, "//*[@class='ybc-model-select-dropdown-item-name']")
@@ -407,7 +407,7 @@ class YuanbaoAutomation:
                 logging.error(f"标签页 {self.tab_id}: 未找到匹配的模型选项: {model}")
                 return False
                 
-            time.sleep(1)
+            time.sleep(0.5)
             logging.info(f"标签页 {self.tab_id}: 模型切换完成")
             return True
         except Exception as e:
@@ -471,7 +471,7 @@ class YuanbaoAutomation:
                 logging.info(f"标签页 {self.tab_id}: 点击新建会话按钮")
                 new_btn.click()
                 logging.info(f"标签页 {self.tab_id}: 等待2秒让页面响应")
-                time.sleep(2)
+                time.sleep(0.5)
                 
                 # 等待新会话加载 - 优化：缩短等待时间，添加详细日志
                 greeting_selectors = [
@@ -483,7 +483,7 @@ class YuanbaoAutomation:
                 
                 logging.info(f"标签页 {self.tab_id}: 等待新会话加载")
                 # 等待10秒后直接跳过
-                time.sleep(10)
+                time.sleep(2)
                 logging.warning(f"标签页 {self.tab_id}: 新会话加载超时，跳过等待")
                 # 不抛出异常，继续执行
             else:
@@ -512,7 +512,7 @@ class YuanbaoAutomation:
                     raise Exception(f"无法定位会话: {session_id}")
                     
                 session.click()
-                time.sleep(2)
+                time.sleep(0.5)
             return True
         except Exception as e:
             logging.error(f"标签页 {self.tab_id}: 会话操作失败: {str(e)}")
@@ -550,10 +550,10 @@ class YuanbaoAutomation:
             logging.info(f"标签页 {self.tab_id}: 原始查询文本: {original_query[:100]}...")
             
             # 获取新消息
-            new_msg = self.get_new_message(timeout=60)
+            new_msg = self.get_new_message(timeout=30)
             
             # 初始等待文本稳定
-            initial_text = self.wait_for_stable_text(new_msg, wait_time=2, timeout=60)
+            initial_text = self.wait_for_stable_text(new_msg, wait_time=0.5, timeout=60)
             logging.info(f"标签页 {self.tab_id}: 初始稳定文本: {initial_text[:100]}...")
             
             # 文本验证逻辑
@@ -564,7 +564,7 @@ class YuanbaoAutomation:
             while validation_count < max_validations:
                 validation_count += 1
                 logging.info(f"标签页 {self.tab_id}: 执行第 {validation_count} 次文本验证")
-                time.sleep(2)
+                time.sleep(0.5)
                 
                 # 检查条件1：响应文本与原始查询完全相同
                 # 检查条件2：响应文本包含原始查询的关键词（防止误判）
@@ -578,14 +578,14 @@ class YuanbaoAutomation:
                     logging.warning(f"标签页 {self.tab_id}: 检测到响应文本与查询文本完全相同 (第{validation_count}次)，可能存在异常")
                     
                     # 额外等待更长时间
-                    extra_wait_time = 3  # 增加等待时间
+                    extra_wait_time = 1  # 减少等待时间
                     logging.info(f"标签页 {self.tab_id}: 额外等待 {extra_wait_time} 秒后重新检查...")
                     time.sleep(extra_wait_time)
                     
                     # 重新获取消息和文本
                     try:
-                        new_msg = self.get_new_message(timeout=30)
-                        current_text = self.wait_for_stable_text(new_msg, wait_time=3, timeout=60)
+                        new_msg = self.get_new_message(timeout=15)
+                        current_text = self.wait_for_stable_text(new_msg, wait_time=1, timeout=60)
                         logging.info(f"标签页 {self.tab_id}: 重新获取文本: {current_text[:100]}...")
                         
                         # 再次验证
@@ -614,7 +614,7 @@ class YuanbaoAutomation:
                     break
             
             # 最终等待确保文本完全稳定
-            final_text = self.wait_for_stable_text(new_msg, wait_time=3, timeout=60)
+            final_text = self.wait_for_stable_text(new_msg, wait_time=1, timeout=60)
             logging.info(f"标签页 {self.tab_id}: 最终稳定文本: {final_text[:100]}...")
             
             logging.info(f"标签页 {self.tab_id}: 文本验证完成，最终文本长度: {len(final_text)}")
@@ -642,7 +642,7 @@ class YuanbaoAutomation:
             input_box = None
             for selector in input_selectors:
                 try:
-                    input_box = WebDriverWait(self.driver, 15).until(
+                    input_box = WebDriverWait(self.driver, 8).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                     )
                     break
@@ -673,7 +673,7 @@ class YuanbaoAutomation:
             send_btn = None
             for selector in send_btn_selectors:
                 try:
-                    send_btn = WebDriverWait(self.driver, 15).until(
+                    send_btn = WebDriverWait(self.driver, 8).until(
                         EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
                     )
                     break
@@ -700,7 +700,7 @@ class YuanbaoAutomation:
             active = None
             for selector in active_selectors:
                 try:
-                    active = WebDriverWait(self.driver, 15).until(
+                    active = WebDriverWait(self.driver, 8).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, selector))
                     )
                     break
