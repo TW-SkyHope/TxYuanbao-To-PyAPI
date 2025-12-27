@@ -72,10 +72,10 @@ class YuanbaoAutomation:
         finally:
             self.lock.release()
     
-    def wait_for_stable_text(self, element, wait_time=0.5, timeout=60):
+    def wait_for_stable_text(self, wait_time=0.5, timeout=60):
         class TextChecker:
-            def __init__(self, element, wait_time, tab_id):
-                self.element = element
+            def __init__(self, driver, wait_time, tab_id):
+                self.driver = driver
                 self.wait_time = wait_time
                 self.last_text = None
                 self.stable_time = None
@@ -95,35 +95,54 @@ class YuanbaoAutomation:
             
             def __call__(self, driver):
                 try:
-                    current_text = self.element.text
-                    logging.debug(f"标签页 {self.tab_id}: 当前文本内容: {current_text[:100]}...")
+                    # 获取所有agent-chat__bubble__content元素
+                    messages = self.driver.find_elements(By.CSS_SELECTOR, '.agent-chat__bubble__content')
+                    if not messages:
+                        logging.debug(f"标签页 {self.tab_id}: 未找到消息元素，继续等待...")
+                        return False
                     
-                    if self.should_skip(current_text):
+                    # 获取最后一个元素的纯文本
+                    last_message = messages[-1]
+                    current_text = last_message.text.strip()
+                    
+                    # 清理文本：去除多余换行符和空格，保留正常换行
+                    cleaned_text = re.sub(r'\s+', ' ', current_text).strip()
+                    # 将连续空格替换为单个空格，保留句子间的合理分隔
+                    cleaned_text = re.sub(r'\s+([.，,；;！!？?])', r'\1', cleaned_text)
+                    
+                    logging.debug(f"标签页 {self.tab_id}: 当前最后消息文本: {cleaned_text[:100]}...")
+                    
+                    if self.should_skip(cleaned_text):
                         logging.debug(f"标签页 {self.tab_id}: 检测到中间状态文本，继续等待...")
                         return False
                         
-                    if current_text != self.last_text:
-                        self.last_text = current_text
+                    if cleaned_text != self.last_text:
+                        self.last_text = cleaned_text
                         self.stable_time = time.time()
                         return False
                     elif self.stable_time and (time.time() - self.stable_time) >= self.wait_time:
-                        logging.debug(f"标签页 {self.tab_id}: 文本已稳定: {current_text[:100]}...")
-                        return current_text
+                        logging.debug(f"标签页 {self.tab_id}: 文本已稳定: {cleaned_text[:100]}...")
+                        return cleaned_text
                     return False
                 except Exception as e:
                     logging.warning(f"标签页 {self.tab_id}: 文本检查出错: {str(e)}")
                     return False
         
         try:
-            return WebDriverWait(element.parent, timeout).until(
-                TextChecker(element, wait_time, self.tab_id)
+            return WebDriverWait(self.driver, timeout).until(
+                TextChecker(self.driver, wait_time, self.tab_id)
             )
         except Exception as e:
             logging.error(f"标签页 {self.tab_id}: 等待文本超时: {str(e)}")
-            try:
-                return element.text
-            except:
-                raise TimeoutError(f"等待文本超时（{timeout}秒）")
+            # 直接获取最后一个元素的文本并清理
+            messages = self.driver.find_elements(By.CSS_SELECTOR, '.agent-chat__bubble__content')
+            if messages:
+                raw_text = messages[-1].text.strip()
+                # 应用相同的文本清理逻辑
+                cleaned_text = re.sub(r'\s+', ' ', raw_text).strip()
+                cleaned_text = re.sub(r'\s+([.，,；;！!？?])', r'\1', cleaned_text)
+                return cleaned_text
+            raise TimeoutError(f"等待文本超时（{timeout}秒）")
     
     def get_new_message(self, timeout=60):
         logging.info(f"标签页 {self.tab_id}: 等待新消息...")
@@ -549,11 +568,8 @@ class YuanbaoAutomation:
             
             logging.info(f"标签页 {self.tab_id}: 原始查询文本: {original_query[:100]}...")
             
-            # 获取新消息
-            new_msg = self.get_new_message(timeout=30)
-            
-            # 初始等待文本稳定
-            initial_text = self.wait_for_stable_text(new_msg, wait_time=0.5, timeout=60)
+            # 初始等待文本稳定 - 直接获取最后一个消息的稳定文本
+            initial_text = self.wait_for_stable_text(wait_time=0.5, timeout=60)
             logging.info(f"标签页 {self.tab_id}: 初始稳定文本: {initial_text[:100]}...")
             
             # 文本验证逻辑
@@ -582,10 +598,9 @@ class YuanbaoAutomation:
                     logging.info(f"标签页 {self.tab_id}: 额外等待 {extra_wait_time} 秒后重新检查...")
                     time.sleep(extra_wait_time)
                     
-                    # 重新获取消息和文本
+                    # 重新获取文本
                     try:
-                        new_msg = self.get_new_message(timeout=15)
-                        current_text = self.wait_for_stable_text(new_msg, wait_time=1, timeout=60)
+                        current_text = self.wait_for_stable_text(wait_time=1, timeout=60)
                         logging.info(f"标签页 {self.tab_id}: 重新获取文本: {current_text[:100]}...")
                         
                         # 再次验证
@@ -595,7 +610,7 @@ class YuanbaoAutomation:
                             break
                             
                     except Exception as e:
-                        logging.error(f"标签页 {self.tab_id}: 重新获取消息失败: {str(e)}")
+                        logging.error(f"标签页 {self.tab_id}: 重新获取文本失败: {str(e)}")
                         break
                         
                 # 如果文本包含关键词但不完全相同，可能是正常响应
@@ -614,7 +629,7 @@ class YuanbaoAutomation:
                     break
             
             # 最终等待确保文本完全稳定
-            final_text = self.wait_for_stable_text(new_msg, wait_time=1, timeout=60)
+            final_text = self.wait_for_stable_text(wait_time=1, timeout=60)
             logging.info(f"标签页 {self.tab_id}: 最终稳定文本: {final_text[:100]}...")
             
             logging.info(f"标签页 {self.tab_id}: 文本验证完成，最终文本长度: {len(final_text)}")
@@ -622,11 +637,18 @@ class YuanbaoAutomation:
             
         except Exception as e:
             logging.error(f"标签页 {self.tab_id}: 文本验证过程出错: {str(e)}")
-            # 出错时返回原始文本
+            # 出错时尝试直接获取最后一个消息的文本并清理
             try:
-                return new_msg.text if new_msg else initial_text
-            except:
+                messages = self.driver.find_elements(By.CSS_SELECTOR, '.agent-chat__bubble__content')
+                if messages:
+                    raw_text = messages[-1].text.strip()
+                    # 应用相同的文本清理逻辑
+                    cleaned_text = re.sub(r'\s+', ' ', raw_text).strip()
+                    cleaned_text = re.sub(r'\s+([.，,；;！!？?])', r'\1', cleaned_text)
+                    return cleaned_text
                 return initial_text
+            except:
+                return ""
     
     def send_message(self, request_data):
         try:
