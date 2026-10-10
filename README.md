@@ -1,4 +1,4 @@
-# TxYuanbao-To-PyAPI  
+# TxYuanbao-To-PyAPI  (已停止维护)
 <h2>基于Python Selenium的Flask API，用于使用Python脚本操控腾讯AI元宝网页的输入上传发送等操作并检测元宝AI的输出将其返回为json，以创建一个腾讯元宝驱动的AI API接口</h2>  
 <h2>原理就是拿你的电脑挂着腾讯元宝网页当api用</h2>
 
